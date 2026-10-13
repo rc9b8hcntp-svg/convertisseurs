@@ -51,10 +51,10 @@ jobs:
           path: Convertisseurs-${{ matrix.arch }}.msi
           if-no-files-found: error
 
-  release:
+release:
     name: Publier sur GitHub (pour les liens du site)
     needs: msi
-    if: ${{ always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -65,6 +65,17 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Créer un tag automatique si absent
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.io"
+          TAG="v0.1.0-manual"
+          git tag $TAG
+          git push origin $TAG
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*.msi
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.1.0-manual' }}
+          target_commitish: ${{ github.sha }}
