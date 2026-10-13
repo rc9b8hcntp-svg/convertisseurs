@@ -1,0 +1,18 @@
+[package]
+name = "convertisseurs"
+version = "1.0.0"
+description = "Convertisseurs de fichiers et audio 8D, hors ligne"
+authors = ["Maxence"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
