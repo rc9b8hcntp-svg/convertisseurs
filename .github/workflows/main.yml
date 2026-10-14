@@ -1,0 +1,136 @@
+name: Construire les installateurs (Windows et Mac)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Numéro de version pour un lancement à la main (ex. 1.0.1)'
+        default: '1.0.0'
+  push:
+    tags: ['v*']
+
+env:
+  # Version = le tag si tu as publié un tag « v1.2.3 », sinon le numéro saisi à la main
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
+
+jobs:
+  msi:
+    name: MSI ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   target: x86_64-pc-windows-msvc }
+          - { arch: x86,   target: i686-pc-windows-msvc }
+          - { arch: arm64, target: aarch64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Mettre le numéro de version
+        shell: pwsh
+        run: node scripts/set-version.mjs "${{ env.VERSION }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Fabriquer les icônes
+        run: npx tauri icon app-icon.png
+
+      - name: Construire le MSI
+        run: npx tauri build --target ${{ matrix.target }} --bundles msi
+
+      - name: Donner un nom fixe au MSI
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi" | Select-Object -First 1
+          Copy-Item $f.FullName "Convertisseurs-${{ matrix.arch }}.msi"
+
+      - name: Garder le MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Convertisseurs-${{ matrix.arch }}-msi
+          path: Convertisseurs-${{ matrix.arch }}.msi
+          if-no-files-found: error
+
+  dmg:
+    name: DMG Mac (Apple Silicon + Intel)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Mettre le numéro de version
+        run: node scripts/set-version.mjs "${{ env.VERSION }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: universal-apple-darwin
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Fabriquer les icônes
+        run: npx tauri icon app-icon.png
+
+      - name: Construire le DMG
+        run: npx tauri build --target universal-apple-darwin --bundles dmg
+
+      - name: Donner un nom fixe au DMG
+        run: |
+          f="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n 1)"
+          test -n "$f"
+          cp "$f" Convertisseurs-mac.dmg
+
+      - name: Garder le DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Convertisseurs-mac-dmg
+          path: Convertisseurs-mac.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publier sur GitHub (pour les liens du site et la mise à jour)
+    needs: [msi, dmg]
+    if: ${{ !cancelled() && (needs.msi.result == 'success' || needs.dmg.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Convertisseurs-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publier la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.msi
+            dist/*.dmg
+          tag_name: ${{ env.VERSION }}
+          name: Version ${{ env.VERSION }}
+          draft: false
+          prerelease: false
